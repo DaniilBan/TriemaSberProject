@@ -1,171 +1,166 @@
 import os
 from collections import defaultdict
+from typing import List, Dict, Any
 from docx import Document
 from docx2python import docx2python
-from docx.text.paragraph import Paragraph
 from docx.table import Table
-from docx.oxml.ns import qn
-from docx.text.run import Run
-from docx.oxml.text.hyperlink import CT_Hyperlink
-from lxml import etree
-etree.register_namespace('w', 'http://schemas.openxmlformats.org/wordprocessingml/2006/main')
-
-
-'''current_dir = os.path.dirname(os.path.abspath(__file__))
-full_path = os.path.join(current_dir, 'demo.docx')
-print("Файлы в папке скрипта:", os.listdir(current_dir))
-print("Ищем файл по пути:", full_path)'''
-document = Document("demo.docx")
-content = docx2python("demo.docx")
-document_timeline = []
-'''test_footnotes_data = [
-    [
-        [ ['Внимание! Применяются особые тарифы обеспечения контракта.'] ],
-        [ ['Размер НМЦК', 'Процент обеспечения'] ],
-        [ ['До 20 млн руб.', '<a href="https://etp.ru">1% от НМЦК</a>'] ],
-        [ ['Ссылка на правила: <a href="https://site.ru">Инструкция</a>'] ]
-    ]
-]'''
-
-
-footnotes_map = defaultdict(str)
-i = 1
-for footnote in content.footnotes:
-    is_table_open = False
-    for blocs in footnote:
-        for paragraph in blocs:
-            if len(paragraph) > 1 and is_table_open == False:
-                footnotes_map[i] += "\n[НАЧАЛО ТАБЛИЦЫ]\n"
-                is_table_open = True
-                footnotes_map[i] += " | ".join(paragraph)
-            elif is_table_open == True and len(paragraph) == 1:
-                footnotes_map[i] += "\n[КОНЕЦ ТАБЛИЦЫ]\n"
-                footnotes_map[i] += "".join(paragraph) + " "
-                is_table_open = False
-            elif is_table_open == True and len(paragraph) > 1:
-                footnotes_map[i] += "\n" +  " | ".join(paragraph)
-            else:
-                footnotes_map[i] += "".join(paragraph) + " "
-
-    footnotes_map[i] = footnotes_map[i].strip()
-    if is_table_open:
-        footnotes_map[i] += "\n[КОНЕЦ ТАБЛИЦЫ]\n"
-        is_table_open = False
-    i += 1
-
-endnotes_map = defaultdict(str)
-i = 1
-for endnote in content.endnotes:
-    is_table_open = False
-    for blocs in endnote:
-        for paragraph in blocs:
-            if len(paragraph) > 1 and is_table_open == False:
-                endnotes_map[i] += "\n[НАЧАЛО ТАБЛИЦЫ]\n"
-                is_table_open = True
-                endnotes_map[i] += " | ".join(paragraph)
-            elif is_table_open == True and len(paragraph) == 1:
-                endnotes_map[i] += "\n[КОНЕЦ ТАБЛИЦЫ]\n"
-                endnotes_map[i] += "".join(paragraph) + " "
-                is_table_open = False
-            elif is_table_open == True and len(paragraph) > 1:
-                endnotes_map[i] += "\n" +  " | ".join(paragraph)
-            else:
-                endnotes_map[i] += "".join(paragraph) + " "
-
-    endnotes_map[i] = endnotes_map[i].strip()
-    if is_table_open:
-        endnotes_map[i] += "\n[КОНЕЦ ТАБЛИЦЫ]\n"
-        is_table_open = False
-    i += 1
-
-
-print("--- СЫРЫЕ ПОДСТРОЧНЫЕ СНОСКИ (footnotes) ---")
-print(content.footnotes)
-print("=== СОДЕРЖИМОЕ СЛОВАРЯ ПОДСТРОЧНЫХ СНОСОК (footnotes_map) ===")
-for key, value in footnotes_map.items():
-    print(f"ID {key}: {value}")
-
-print("\n=== СОДЕРЖИМОЕ СЛОВАРЯ КОНЦЕВЫХ СНОСОК (endnotes_map) ===")
-for key, value in endnotes_map.items():
-    print(f"ID {key}: {value}")
-
-print("\n--- СЫРЫЕ КОНЦЕВЫЕ СНОСКИ (endnotes) ---")
-print(content.endnotes)
-
-
-
-from docx.oxml.ns import qn
-
+from docx.text.paragraph import Paragraph
 from docx.text.run import Run
 from docx.text.hyperlink import Hyperlink
 from docx.oxml.ns import qn
 
-def extract_text_from_paragraph(paragraph, doc):
-    text = ""
-
-    # 1. Обрабатываем всё содержимое через iter_inner_content()
-    for child in paragraph.iter_inner_content():
-        if isinstance(child, Run):
-            text += child.text
-        elif isinstance(child, Hyperlink):
-            visible_text = child.text
-            r_id = child._element.get(qn('r:id'))
-            url = doc.part.rels[r_id].target_ref if r_id in doc.part.rels else ""
-            text += f'<a href="{url}">{visible_text}</a>'
-
-    # 2. Ищем сноски через XML (iter_inner_content() их не выдаёт)
-    w = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
-
-    # Подстрочные сноски
-    for ref in paragraph._element.findall('.//' + w + 'footnoteReference'):
-        footnote_id = ref.get(qn('w:id'))
-        if footnote_id and footnote_id.isdigit():
-            footnote_text = footnotes_map.get(int(footnote_id), "Сноска не найдена")
-            text += f" [СНОСКА: {footnote_text}] "
-
-    # Концевые сноски
-    for ref in paragraph._element.findall('.//' + w + 'endnoteReference'):
-        endnote_id = ref.get(qn('w:id'))
-        if endnote_id and endnote_id.isdigit():
-            endnote_text = endnotes_map.get(int(endnote_id), "Сноска не найдена")
-            text += f" [СНОСКА: {endnote_text}] "
-
-    return text.replace('\n', ' ').strip()
-
-for element in document.element.body:
-    if element.tag.endswith('tbl'):
-        table = Table(element, document)
-        document_timeline.append("\n[НАЧАЛО ТАБЛИЦЫ]\n")
-        for row in table.rows:
-            row_string = ""
-            for cell in row.cells:
-                cell_text = ""
-                for paragraph in cell.paragraphs:
-                    cell_text += extract_text_from_paragraph(paragraph, document) + " "
-                row_string += cell_text + " | "
-            document_timeline.append(row_string.rstrip(" |"))
-        document_timeline.append("\n[КОНЕЦ ТАБЛИЦЫ]\n")
-    elif element.tag.endswith('paragraph') or element.tag.endswith('}p'):
-        paragraph_text = Paragraph(element, document)
-        cleaned_text = extract_text_from_paragraph(paragraph_text, document)
-        document_timeline.append(cleaned_text)
+from interfaces import ParserInterface, ParsedDocument
 
 
+class DocxParser(ParserInterface):
+    """
+    Класс для парсинга файлов Word (.docx).
+    Извлекает текст с сохранением хронологии, гиперссылок,
+    сложной структуры таблиц и подстрочных/концевых сносок.
+    """
+
+    def parse(self, file_path: str) -> ParsedDocument:
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Файл {file_path} не найден!")
+
+        # 1. Извлечение сносок через docx2python
+        content = docx2python(file_path)
+        footnotes_map = self._parse_notes(content.footnotes)
+        endnotes_map = self._parse_notes(content.endnotes)
+
+        # 2. Основной парсинг документа через python-docx
+        document = Document(file_path)
+        document_timeline: List[str] = []
+        extracted_tables: List[Dict[str, Any]] = []
+
+        for element in document.element.body:
+            # Если элемент — Таблица
+            if element.tag.endswith('tbl'):
+                table = Table(element, document)
+                table_rows_data = []
+                document_timeline.append("\n[НАЧАЛО ТАБЛИЦЫ]\n")
+
+                for row in table.rows:
+                    row_cells_text = []
+                    for cell in row.cells:
+                        cell_text = ""
+                        for paragraph in cell.paragraphs:
+                            cell_text += self._extract_text_from_paragraph(
+                                paragraph, document, footnotes_map, endnotes_map
+                            ) + " "
+                        row_cells_text.append(cell_text.strip())
+
+                    row_str = " | ".join(row_cells_text)
+                    document_timeline.append(row_str)
+                    table_rows_data.append(row_cells_text)
+
+                document_timeline.append("\n[КОНЕЦ ТАБЛИЦЫ]\n")
+                extracted_tables.append({
+                    "data": table_rows_data
+                })
+
+            # Если элемент — Абзац
+            elif element.tag.endswith('paragraph') or element.tag.endswith('}p'):
+                paragraph_obj = Paragraph(element, document)
+                cleaned_text = self._extract_text_from_paragraph(
+                    paragraph_obj, document, footnotes_map, endnotes_map
+                )
+                if cleaned_text:
+                    document_timeline.append(cleaned_text)
+
+        full_text = "\n".join(document_timeline)
+
+        # 3. Формирование итогового Pydantic-объекта
+        return ParsedDocument(
+            filename=os.path.basename(file_path),
+            file_type="docx",
+            full_text=full_text,
+            pages_or_sheets={"main": full_text},
+            tables=extracted_tables if extracted_tables else None,
+            metadata={
+                "paragraphs_count": len(document.paragraphs),
+                "tables_count": len(document.tables),
+                "footnotes_count": len(footnotes_map),
+                "endnotes_count": len(endnotes_map)
+            }
+        )
+
+    def _parse_notes(self, notes_content: List) -> Dict[int, str]:
+        """Вспомогательный метод парсинга сносок из docx2python"""
+        notes_map = defaultdict(str)
+        i = 1
+        for note in notes_content:
+            is_table_open = False
+            for blocks in note:
+                for paragraph in blocks:
+                    if len(paragraph) > 1 and not is_table_open:
+                        notes_map[i] += "\n[НАЧАЛО ТАБЛИЦЫ]\n"
+                        is_table_open = True
+                        notes_map[i] += " | ".join(paragraph)
+                    elif is_table_open and len(paragraph) == 1:
+                        notes_map[i] += "\n[КОНЕЦ ТАБЛИЦЫ]\n"
+                        notes_map[i] += "".join(paragraph) + " "
+                        is_table_open = False
+                    elif is_table_open and len(paragraph) > 1:
+                        notes_map[i] += "\n" + " | ".join(paragraph)
+                    else:
+                        notes_map[i] += "".join(paragraph) + " "
+
+            notes_map[i] = notes_map[i].strip()
+            if is_table_open:
+                notes_map[i] += "\n[КОНЕЦ ТАБЛИЦЫ]\n"
+            i += 1
+        return notes_map
+
+    def _extract_text_from_paragraph(
+            self,
+            paragraph: Paragraph,
+            doc: Document,
+            footnotes_map: Dict[int, str],
+            endnotes_map: Dict[int, str]
+    ) -> str:
+        """Извлечение текста из абзаца с учетом ссылок и XML-сносок"""
+        text = ""
+
+        # Обработка содержимого и ссылок
+        for child in paragraph.iter_inner_content():
+            if isinstance(child, Run):
+                text += child.text
+            elif isinstance(child, Hyperlink):
+                visible_text = child.text
+                r_id = child._element.get(qn('r:id'))
+                url = doc.part.rels[r_id].target_ref if r_id and r_id in doc.part.rels else ""
+                text += f'<a href="{url}">{visible_text}</a>'
+
+        # Обработка сносок через XML
+        w = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
+
+        for ref in paragraph._element.findall('.//' + w + 'footnoteReference'):
+            f_id = ref.get(qn('w:id'))
+            if f_id and f_id.isdigit():
+                f_text = footnotes_map.get(int(f_id), "Сноска не найдена")
+                text += f" [СНОСКА: {f_text}] "
+
+        for ref in paragraph._element.findall('.//' + w + 'endnoteReference'):
+            e_id = ref.get(qn('w:id'))
+            if e_id and e_id.isdigit():
+                e_text = endnotes_map.get(int(e_id), "Сноска не найдена")
+                text += f" [СНОСКА: {e_text}] "
+
+        return text.replace('\n', ' ').strip()
 
 
+# --- Проверка работы парсера ---
+if __name__ == "__main__":
+    # Тестовый запуск
+    test_file = "demo.docx"
+    if os.path.exists(test_file):
+        parser = DocxParser()
+        parsed_doc = parser.parse(test_file)
 
-
-# Печатаем заголовок для наглядности
-print("=== РЕЗУЛЬТАТ ПАРСИНГА ДОКУМЕНТА ===\n")
-
-# Перебираем хронологический массив строки за строкой
-for index, line in enumerate(document_timeline, 1):
-    if not line.strip():
-        # Печатаем её маркер, чтобы вы видели: тут пустой абзац автора для красоты!
-        print(f"[{index}] <ПУСТАЯ СТРОКА ДОКУМЕНТА>")
-    # Выводим номер строки и её содержимое
-    print(f"[{index}] {line}")
-
-
-'''print("РЕЗУЛЬТАТ ТЕСТИРОВАНИЯ СНОСКИ №1:\n")
-print(footnotes_map[1])'''
+        print("=== ТЕСТ PARSED DOCUMENT ===")
+        print(f"Имя файла: {parsed_doc.filename}")
+        print(f"Формат: {parsed_doc.file_type}")
+        print(f"Метаданные: {parsed_doc.metadata}")
+        print("\nФрагмент текста:\n")
+        print(parsed_doc.full_text[:300])

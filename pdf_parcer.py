@@ -1,95 +1,114 @@
-import pypdf
+import os
 from typing import List, Dict, Any, Optional
+import pdfplumber
+from pydantic import BaseModel
+
+# Попытка импорта OCR библиотек
+try:
+    from pdf2image import convert_from_path
+    import pytesseract
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+
 from interfaces import ParserInterface, ParsedDocument
 
 
 class PdfParser(ParserInterface):
+    """
+    Класс для парсинга PDF-документов.
+    Поддерживает извлечение встроенного текста, таблиц и OCR для сканов.
+    """
+
     def parse(self, file_path: str) -> ParsedDocument:
-        reader = pypdf.PdfReader(file_path)
-        full_text = ""
-        pages_text = {}
-        all_tables = []
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Файл {file_path} не найден!")
 
-        for i, page in enumerate(reader.pages):
-            page_num = i + 1
-            page_text = page.extract_text()
-            pages_text[f"Page_{page_num}"] = page_text
-            full_text += f"\n--- Страница {page_num} ---\n{page_text}\n"
+        full_text_list: List[str] = []
+        pages_dict: Dict[str, str] = {}
+        extracted_tables: List[Dict[str, Any]] = []
+        used_ocr = False
 
-            # Извлечение таблиц с текущей страницы
-            tables_on_page = self._extract_tables_from_page(page, page_num)
-            print(tables_on_page)
-            if tables_on_page:
-                all_tables.extend(tables_on_page)
-        print(all_tables)
+        with pdfplumber.open(file_path) as pdf:
+            total_pages = len(pdf.pages)
+
+            for i, page in enumerate(pdf.pages):
+                page_num = i + 1
+                page_text = page.extract_text() or ""
+
+                # --- ПУНКТ ТЗ (*): Поддержка сканированных PDF (OCR) ---
+                if not page_text.strip():
+                    ocr_text = self._apply_ocr_to_page(file_path, page_num)
+                    if ocr_text:
+                        page_text = ocr_text
+                        used_ocr = True
+
+                pages_dict[f"Page_{page_num}"] = page_text
+                full_text_list.append(f"--- Страница {page_num} ---\n{page_text}")
+
+                # --- Извлечение таблиц ---
+                tables = page.extract_tables()
+                for table in tables:
+                    if table:
+                        # Очистка ячеек от None и форматирование строк
+                        cleaned_table = [
+                            [cell.strip() if cell else "" for cell in row]
+                            for row in table
+                        ]
+                        extracted_tables.append({
+                            "page": page_num,
+                            "data": cleaned_table
+                        })
+
+        full_text = "\n\n".join(full_text_list)
 
         return ParsedDocument(
-            filename=file_path.split("/")[-1],
+            filename=os.path.basename(file_path),
             file_type="pdf",
             full_text=full_text,
-            pages_or_sheets=pages_text,
-            tables=all_tables if all_tables else None,
+            pages_or_sheets=pages_dict,
+            tables=extracted_tables if extracted_tables else None,
             metadata={
-                "page_count": len(reader.pages),
-                "is_encrypted": reader.is_encrypted
+                "page_count": total_pages,
+                "used_ocr": used_ocr,
+                "tables_count": len(extracted_tables)
             }
         )
 
-    def _extract_tables_from_page(self, page, page_num: int) -> List[Dict[str, Any]]:
-        tables = []
+    def _apply_ocr_to_page(self, file_path: str, page_num: int) -> str:
+        """Извлечение текста из изображения (скана) с помощью Optical Character Recognition (OCR)"""
+        if not OCR_AVAILABLE:
+            print("⚠️ OCR библиотеки не установлены (pdf2image, pytesseract). Пропуск скана.")
+            return ""
 
         try:
-            # Попытка извлечь таблицы с помощью pypdf
-            for table in page.find_tables():
-                table_data = []
-                headers = []
-
-                rows = list(table.rows)
-
-                if not rows:
-                    continue
-
-                # Определяем заголовки (первая строка)
-                header_row = rows[0]
-                headers = [cell.get_text().strip() for cell in header_row.cells]
-
-                # Если заголовки пустые или все одинаковые, используем нумерацию
-                if not headers or all(h == "" for h in headers):
-                    headers = [f"Column_{j + 1}" for j in range(len(header_row.cells))]
-
-                # Извлекаем данные со 2-й строки (если есть)
-                for row in rows[1:]:
-                    row_data = []
-                    for j, cell in enumerate(row.cells):
-                        cell_text = cell.get_text().strip()
-                        # Попытка преобразовать в число, если возможно
-                        try:
-                            if cell_text.replace('.', '', 1).replace('-', '', 1).isdigit():
-                                cell_text = float(cell_text)
-                        except (ValueError, TypeError):
-                            pass
-                        row_data.append(cell_text)
-
-                    # Дополняем строку, если она короче заголовков
-                    while len(row_data) < len(headers):
-                        row_data.append("")
-
-                    table_data.append(row_data)
-
-                # Если есть данные, создаем словарь
-                if table_data:
-                    table_dict = {
-                        "page": page_num,
-                        "headers": headers,
-                        "data": table_data
-                    }
-                    tables.append(table_dict)
-
-        except AttributeError:
-            print("qwerty")
-            pass
+            # Конвертируем нужную страницу PDF в PIL-изображение
+            images = convert_from_path(
+                file_path,
+                first_page=page_num,
+                last_page=page_num
+            )
+            if images:
+                # Распознаем русско-английский текст
+                text = pytesseract.image_to_string(images[0], lang='rus+eng')
+                return text.strip()
         except Exception as e:
-            # Логирование ошибки при извлечении таблиц
-            print(f"Error extracting tables from page {page_num}: {e}")
+            print(f"❌ Ошибка OCR на странице {page_num}: {e}")
 
-        return tables
+        return ""
+
+
+# --- Проверка работы ---
+if __name__ == "__main__":
+    test_pdf = "sample-table.pdf"
+    if os.path.exists(test_pdf):
+        parser = PdfParser()
+        parsed_doc = parser.parse(test_pdf)
+
+        print("=== РЕЗУЛЬТАТ ПАРСИНГА PDF ===")
+        print(f"Имя файла: {parsed_doc.filename}")
+        print(f"Страниц: {parsed_doc.metadata.get('page_count')}")
+        print(f"Использовался OCR: {parsed_doc.metadata.get('used_ocr')}")
+        print(f"Найдено таблиц: {parsed_doc.metadata.get('tables_count')}")
+        print("\nФрагмент текста:\n")
+        print(parsed_doc.full_text[:300])
