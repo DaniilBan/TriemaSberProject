@@ -29,6 +29,14 @@ class GigaChatLLM(LLMInterface):
     Отвечает за извлечение сущностей (ИНН, Телефоны, Поставщики и др.) из ParsedDocument.
     """
 
+    def _clean_text_for_llm(self, text: str) -> str:
+        """Нормализация текста для сглаживания разницы между PDF и DOCX"""
+        if not text:
+            return ""
+        # Заменяем все разрывы и множественные пробелы на одиночные
+        cleaned = re.sub(r'\s+', ' ', text)
+        return cleaned.strip()
+
     def __init__(self, access_token: Optional[str] = None, model_name: str = "GigaChat"):
         """
         :param credentials: Токен авторизации GigaChat (или из переменной окружения GIGACHAT_CREDENTIALS)
@@ -60,6 +68,9 @@ class GigaChatLLM(LLMInterface):
         :param target_types: Список типы данных для удаления (напр. ['INN', 'PHONE', 'PARTY', 'EMAIL'])
         :return: Список найденных объектов MaskedEntity
         """
+        clean_text = self._clean_text_for_llm(parsed_doc.full_text)
+        text_to_analyze = clean_text[:12000]
+
         prompt = f"""
 Ты — AI-ассистент по деидентификации и анонимизации документов.
 Проанализируй текст документа и найди в нем все упоминания следующих типов данных: {target_types}.
@@ -82,7 +93,7 @@ class GigaChatLLM(LLMInterface):
 
 Текст документа для анализа:
 ---
-{parsed_doc.full_text[:4000]} 
+{text_to_analyze} 
 ---
 """
         raw_response = self.generate(prompt)
@@ -143,31 +154,3 @@ class LocalOllamaLLM(LLMInterface):
 
     def get_embedding(self, text: str) -> List[float]:
         return []
-
-
-# --- 4. Проверка работы модуля ---
-if __name__ == "__main__":
-    # Тестовые данные
-    mock_doc = ParsedDocument(
-        filename="test_contract.docx",
-        file_type="docx",
-        full_text="Договор поставки. Поставщик: ООО 'Вектор', ИНН 7712345678. Заказчик: АО 'Триема'. Тел: +7 (999) 111-22-33",
-        pages_or_sheets={"main": "..."},
-        tables=None,
-        metadata={}
-    )
-
-    print("=== ТЕСТИРОВАНИЕ ИИ-СЛОЯ ===")
-
-    # Можно легко переключать модели в 1 строчку:
-    # llm_service = LocalOllamaLLM()
-    try:
-        # Для запуска требуется установленный токен GigaChat
-        llm_service = GigaChatLLM(access_token="eyJjdHkiOiJqd3QiLCJlbmMiOiJBMjU2Q0JDLUhTNTEyIiwiYWxnIjoiUlNBLU9BRVAtMjU2In0.uyZ6rMAWX1Ho8wE2nV0G-MNzZpeDLEhTIwSdNpKN4y0C1zuD85dlDHSNDHSOzVP8pYu9weJsA4HXDoQt26ntssPP_oNeRJUJA8EYKBLBjXNFjpOReifZIfmKZ1xZoNUNb9DeAeE6hdGtt-FZ9wSuQmiu9GXvcvXLY9CSEv2tLKbQmklbegGLenUT-ZKLWRPNWXLRn_ReDBWwmvKYcutGLhWgjig_jl7feXukYFTUnQHMKov9WvRx90Edh3uN_kFUuHBEzcSURQUPO1Zyi31-bxOM0gFbeYk8YF2x3oJl0iDoSybYF8XlNNW8fR8kUQp5pt4ozO-eybCER5YhD3Zecg.9YQ8qLKTdhTNsadyk-liIQ.FyANVWfHRMga-HmSv90pExxlshW6Ley0MKROEZ9o1Gl-ATeaOBAZP0B0jujX6JM92G3jmKLLzUstZOYrJ_yD1xFB7fNZh_XgQjy0-o3ZSO6csLMVIwKBZVW4aSyAQBQS9qBdDeVEpx5JTr2ZJdboHPesZQzljyq5ntsu2J0vYx2bO_lCeKWvee0hNBQEEORKmsgINX4vMMoaDt05ggn67iy2ypUv2iL-X2HeFnUWfvoJtL35wUtB9Xp02VCS0INjZ64Yp_JxBSoDaZA3IitIi0-dGAgdktsYifGi80xeQWLDDqjHi0SpYnnsQBzTLuUhrdpsqoLLbLqeWqexinUv-r4WNcZp7oyIKpHH1Khu-BLjIUH3XsBVfty4Nla7aX0bu9iFoHwamCQ47P9HXqBlxxaaracIML1Dxn_523OG143KUnstbqeQpv8zKbYuSthN67-UinI6y8zyR1r1tXjZMkI83Q1yhKNG_kk1H1wZMl2YHDXYeHvDu2f1ey2qIju1xhIs475RxATq2FQtbsDN0QE3EsAarIxzLh_kMACMLG_Cw5xpOh2RjjfSG_qSji1znCUscej8IDEOBgyBqdgENhUOtNHnA5ulIZ99zfl5_nW77DvfBizkXQTk6ZCjcpTlhgs-RxpBjRbKDPY1XpsNIVIuN4SoNsJQxmUy-ucVu-hU5twzS9jLj5XPJ8eiLgCONqrELBfHtu6s1U4xImTRwpMDsoOzOWE7o2vmUpikt48.7kLPjY5FjqQOSOQJvkKXr4P7n3ak8fA-I6FbomGvc7w")
-        results = llm_service.extract_entities(mock_doc, target_types=['INN', 'PHONE', 'PARTY'])
-
-        for entity in results:
-            print(
-                f"Найдено: {entity.original_text} | Тип: {entity.entity_type} | Позиция: {entity.start_pos}:{entity.end_pos}")
-    except Exception as e:
-        print(f"Тестовый запуск без токена: {e}")
