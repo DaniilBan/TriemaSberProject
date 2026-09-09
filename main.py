@@ -18,6 +18,58 @@ from interactive_validator import InteractiveValidator
 from document_masker import mask_docx, mask_xlsx, mask_pdf
 
 
+def debug_missing_entities_session(llm, document_text: str, extracted_entities: dict):
+    """
+    Интерактивная сессия для тестирования и анализа пропущенных сущностей.
+    Не заменяет валидатор, используется только для ручной отладки промпта.
+    """
+    print("\n" + "=" * 60)
+    print("🛠️  РЕЖИМ ОТЛАДКИ ПРОМПТА И ПОИСКА ПРОПУСКОВ (GIGACHAT)")
+    print("Задайте вопросы модельке (например: 'Почему ты не нашел КПП 366601010?')")
+    print("Введите 'next' или 'exit' для перехода к Шагу 3 (Валидатор).")
+    print("=" * 60 + "\n")
+
+    # Инициализируем историю диалога системным контекстом
+    history = [
+        {
+            "role": "system",
+            "content": "Ты — AI-ассистент. Ранее ты анализировал документ и извлекал из него сущности."
+        },
+        {
+            "role": "user",
+            "content": f"Вот текст документа, который ты анализировал:\n---\n{document_text[:8000]}\n---\n\nВот сущности, которые ты извлек:\n{extracted_entities}"
+        },
+        {
+            "role": "assistant",
+            "content": "Я ознакомился с документом и списком извлеченных сущностей. Готов ответить на твои вопросы по качеству извлечения."
+        }
+    ]
+
+    while True:
+        user_query = input("❓ [Debug Prompt] Ваш вопрос к GigaChat: ").strip()
+
+        if user_query.lower() in ["next", "exit", "quit", "выход"]:
+            print("👋 Завершение сессии отладки. Переход к Шагу 3...\n")
+            break
+
+        if not user_query:
+            continue
+
+        # Добавляем вопрос пользователя в историю
+        history.append({"role": "user", "content": user_query})
+
+        try:
+            # Получаем ответ от LLM с учетом всего контекста
+            bot_response = llm.chat_with_history(history)
+
+            # Сохраняем ответ модели в историю для следующего уточняющего вопроса
+            history.append({"role": "assistant", "content": bot_response})
+
+            print(f"\n🤖 [GigaChat]: {bot_response}\n")
+            print("-" * 60)
+        except Exception as e:
+            print(f"⚠️ Ошибка при запросе к GigaChat: {e}\n")
+
 def get_parser(file_extension: str) -> ParserInterface:
     """
     Фабрика парсеров для выбора соответствующего класса по расширению файла.
@@ -64,10 +116,12 @@ def run_pipeline(file_path: str, output_path: str = None):
     # Можно легко сменить реализацию на LocalOllamaLLM() при необходимости
     try:
         # При необходимости передайте access_token авторизации
-        llm: LLMInterface = GigaChatLLM("eyJjdHkiOiJqd3QiLCJlbmMiOiJBMjU2Q0JDLUhTNTEyIiwiYWxnIjoiUlNBLU9BRVAtMjU2In0.BisKW4tXIE5etGpRvw5pCbJP644oovbSHkyKb9cDKCl9KOvcHBCvNcXGixg-ZbjTizdzBQue2lMh6TBFkbmiIa-xEgH4W9dZCAVnb-jxTa77c3Ryf8ZKyPCLNbHFm0zJBUk2ApniOEF7P6qL6gBInkU_G4xteNMRAgXrd8ZgKceckfxVUIoAARSllJksVqTgg8cmlM0IJgEx8reuSr564oAVNECZU53MUcnS2rde-xN8Hoe91UNXV2tdB6CGkzEkbdnWTTAiXANDdRnpDx2Ua3nJuTkt1azoMLrjgcGkpvrFqBlfDFnr6yYI-nXpeg7JyxRJVPBSAW-Xg8ROwCcrLw.lNOfV8mZtBrl0ww7HxOTHA.UVgSIBSbgQ9KB0o64tIkSU-gJ27cWExUcTRt8QwdODn_ykIEVhp2h7xMebZKf9GBcSw6rDwdctQqmS1TRnq3XHqALjNREP3_Zn0lS5qTTaYYe8Zc4iePRwCFq25nsMu74_dWzdfSkdtKD7hR51zw2x1A-tVOz5u3hNm6eTaDTm1HUukLmES8gtZqdjlJthmnd9sq95kAyQEwYZCLIvN828CfdY54ddX164mAb4JlvuIr_8y_A1wQIsTimUpQuAFokpVFFpW29m2n5T1Ckn9mkvITofwzuibc2kOutKRJYbHSH658o6xAed5GPCft7VuzP71WFg2Zx_jqSM5cjqdpGdep89ROCkdJxp_tqmZNt6erVn74lI-ykDVi698pqcgy257Txv7_P88yaM_CSS7bU9Tx_wRbc2BGn31AAaHPApmzV02cmbI1rMWgeRCVtXZe6BVZ7y3FeYPZPH6kZzPXYTcFdd9Mux7g27I3g7cRyuNkbSLCR2u5LAzOX5K16kufDBMhOOEnnIWAJJLT5j27HG76wZ6R-widax9_Os8f3m6KgOWvWhGW0MXxwR1UyKEggYKlsBhrqkgfyMqlGZSqGBQ1Wg6WcX2g9XSFSfJv4rNhWJF8tJMQ3YpxZWAsX4qvKA9tEJU63Hj5k-uh2KzymY4vfNnCSwtSEN4qHom2l87vO-uMnj5brOw5QgeuI74iZ3wjk6DWJHjVEEz-Il-hNdnaTPQVMTBXalawyy07hmA.yE7U9L7Y3F7-BqgQW_rDPBPCmgQhr-EqL20LoSxMfS0")
+        llm: LLMInterface = GigaChatLLM("eyJjdHkiOiJqd3QiLCJlbmMiOiJBMjU2Q0JDLUhTNTEyIiwiYWxnIjoiUlNBLU9BRVAtMjU2In0.azzKwJsitXy-cvQ9OnrWsnJyeplXq1It76tJIKuV75kY23uNF9FvMT8OzEutv-v1g2z0yTohz9D2wIKoya7HH094KwT7aONYoF0xFgL3V8DDEsxVSUD-Lx8Y4T_57uiAf2r82MPNFxsuQgaMRHwNuS6UW10GzI56Si5U6uOw6ypzRJs83555PUHvkVuDG9g3IgDGb9JH-yMPfsigwTlYFOEyglLshbdfEZbBzltHyDAVrsjG0jqzPDEPmDdImBGwN0Xgr7Qrp0LJFFomIu9tz8J2aFZfBvnSdpAx94YpzUw1bvwDzkeDJGiAExksZpTUXohtdUF9bGmoGRKtfxXr2w.tF2CmDSw_fqlygI0MgfCQQ.1AlaxaPCgt55PePFhd-cw6SDpecZrDCd9AyfG_rfQkqhV3mm_kmPFZoyWl2FXNoFg6H8Ey062V7tdn3qNHV0izAXQA9ePronlUBpDy2bFC1nOJHJp36xt8R-yQ_g4V36hg9qyAT5_YScwgZ_nPDzdhE0cY7vsj4Nw5RyXvChRl2bzJEul2GJ5LyUqGeC09P-Pyehxkt3Xm95LcDUDgf29fPAZfuiRjX0unLPHE3KW97g6ldeiA_kOu_VQkwu9FoJ7HSe-PT002-CWye3WkwByvFvodPHRcS-Rbsp9Gd0gi_9nssliXEv4edA45WA6i2rjoReXYdKIJ1FweBF6lw0qqD1cl4x5b-zmMLnLoNpa_l62bk8hEOT9CFVKwmzjwVQWmYUcGWbH-KKYt5nPtkI4o8U31SSr6CzZ5ioK2cI79CreuChxtwgh6Cf75Qsl9hmQ_nQPgRVr6ubaMmaE5RsDy6MfdoPiDGYFQUnHsFRK9PDVMFHQVciZ0GwDpw1_OfciCOi8coreOEw0MO9E1OAD4P5gonrIfi6T70zN_mvwhxT5Q1DqKFjhwsXzBiNC_jRjOnlP3sS12h655bH0HWME3MfPfbCeiOFlb69iZgdAbCnQU73P-koK6UvPVRIGX8-jlNKEIESz23EKaP23oE1bI2khnYrcyfbDPsNBhn6I_w-blrfp4orCnmUoVJqS59blsASdFICwpfuCASuqxK2_8Jrz91j1YCdMUmzCz-Jzzw.zHvxrL6KqwQ1VqyFMFv_5HQuRInkmwKvVFVLWIw7C1Y")
     except Exception as e:
         print(f"⚠️ Ошибка инициализации GigaChatLLM ({e}). Использование фоллбэка.")
         llm: LLMInterface = LocalOllamaLLM()
+
+
 
     # Целевые типы данных для извлечения (в соответствии с ТЗ)
     target_types = ['INN', 'PHONE', 'PARTY', 'EMAIL', 'PASSPORT', 'ADDRESS', 'FIO', 'CONFIDENTIAL DATA']
@@ -81,6 +135,12 @@ def run_pipeline(file_path: str, output_path: str = None):
         entity.original_text: entity.masked_text
         for entity in extracted_entities_list
     }
+
+    debug_missing_entities_session(
+        llm=llm,
+        document_text=parsed_doc.full_text,
+        extracted_entities=initial_replacements
+    )
 
     print(f"-> Найдено уникальных сущностей: {len(initial_replacements)}")
     for orig, mask in initial_replacements.items():

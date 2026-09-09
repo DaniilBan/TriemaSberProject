@@ -55,19 +55,26 @@ class GigaChatLLM(LLMInterface):
         response = self.client.chat(prompt)
         return response.choices[0].message.content
 
+    def chat_with_history(self, messages: list) -> str:
+        """
+        Метод для ведения контекстного диалога с передачей истории сообщений.
+        """
+        payload = {
+            "model": self.model_name,
+            "messages": messages
+        }
+        response = self.client.chat(payload)
+        return response.choices[0].message.content
+
     def get_embedding(self, text: str) -> List[float]:
         """Получение эмбеддингов текста"""
         response = self.client.embeddings(texts=[text])
         return response.data[0].embedding
 
     def extract_entities(self, parsed_doc: ParsedDocument, target_types: List[str]) -> List[MaskedEntity]:
-        """
-        Специализированный метод для анализа ParsedDocument и поиска сущностей.
+        if not parsed_doc or not parsed_doc.full_text or not parsed_doc.full_text.strip():
+            return []
 
-        :param parsed_doc: Объект распарсенного документа
-        :param target_types: Список типы данных для удаления (напр. ['INN', 'PHONE', 'PARTY', 'EMAIL'])
-        :return: Список найденных объектов MaskedEntity
-        """
         clean_text = self._clean_text_for_llm(parsed_doc.full_text)
         text_to_analyze = clean_text[:12000]
 
@@ -79,9 +86,13 @@ class GigaChatLLM(LLMInterface):
 - Определи, кто является Поставщиком/Исполнителем/Продавцом (присвой entity_type = 'SUPPLIER').
 - Определи, кто является Покупателем/Заказчиком/Клиентом (присвой entity_type = 'BUYER').
 
-Верни ответ СТРОГО в формате JSON без каких-либо вводных слов и пояснений. 
+ОБЯЗАТЕЛЬНОЕ УСЛОВИЕ:
+В поле 'target_types_received' перечисли ВСЕ типы сущностей, которые тебя попросили найти в этом запросе.
+
+Ответ должен быть СТРОГО валидным JSON-объектом без вводных слов.
 Структура JSON:
 {{
+  "target_types_received": ["ТИП_1", "ТИП_2"],
   "entities": [
     {{
       "original_text": "ТОЧНЫЙ_ТЕКСТ_ИЗ_ДОКУМЕНТА",
@@ -100,17 +111,19 @@ class GigaChatLLM(LLMInterface):
         return self._parse_llm_json_response(raw_response, parsed_doc.full_text)
 
     def _parse_llm_json_response(self, raw_response: str, full_text: str) -> List[MaskedEntity]:
-        """Очистка и парсинг JSON-ответа от LLM в объекты MaskedEntity"""
         masked_entities = []
         try:
-            # Вырезаем JSON из возможной Markdown-разметки (```json ... ```)
             json_match = re.search(r'\{.*\}', raw_response, re.DOTALL)
             if not json_match:
                 return []
 
             data = json.loads(json_match.group(0))
-            entities_list = data.get("entities", [])
 
+            # ВЫВОД В КОНСОЛЬ: что модель поняла из вашего промпта
+            received_types = data.get("target_types_received", [])
+            print(f"\n🤖 [GigaChat ответил]: Я ищу следующие типы сущностей: {received_types}\n")
+
+            entities_list = data.get("entities", [])
             for item in entities_list:
                 orig_text = item.get("original_text", "").strip()
                 entity_type = item.get("entity_type", "UNKNOWN")
@@ -119,7 +132,6 @@ class GigaChatLLM(LLMInterface):
                 if not orig_text:
                     continue
 
-                # Ищем точные позиционные индексы вхождений в исходном тексте
                 for match in re.finditer(re.escape(orig_text), full_text):
                     masked_entities.append(
                         MaskedEntity(
@@ -151,6 +163,10 @@ class LocalOllamaLLM(LLMInterface):
     def generate(self, prompt: str, **kwargs) -> str:
         # Здесь будет вызов локального API Ollama (http://localhost:11434/api/generate)
         return '{"entities": []}'
+
+    def chat_with_history(self, messages: list) -> str:
+        """Заглушка для локальной модели"""
+        return "Локальная модель не поддерживает контекст диалога."
 
     def get_embedding(self, text: str) -> List[float]:
         return []
