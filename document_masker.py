@@ -1,58 +1,105 @@
 import fitz  # PyMuPDF
 import docx
-from docx.shared import RGBColor
 from docx.enum.text import WD_COLOR_INDEX
 import openpyxl
 from openpyxl.styles import PatternFill
-from typing import Dict, List
+from typing import Dict
+import re
+
+
+def _get_sorted_replacements(replacements: Dict[str, str]) -> Dict[str, str]:
+    return dict(
+        sorted(
+            replacements.items(),
+            key=lambda item: len(item[0]),
+            reverse=True
+        )
+    )
+
+
+def _build_flexible_regex(target_text: str) -> re.Pattern:
+    """
+    Строит регулярное выражение, которое игнорирует разницу между
+    обычными пробелами, неразрывными пробелами (\xa0) и множественными пробелами.
+    """
+    # Экранируем спецсимволы
+    escaped = re.escape(target_text.strip())
+    # Заменяем экранированные пробелы на шаблон, подходящий под ЛЮБЫЕ пробельные символы (\s+)
+    pattern_str = re.sub(r'\\?\s+', r'\\s+', escaped)
+    return re.compile(pattern_str, re.IGNORECASE)
 
 
 def mask_docx(input_path: str, output_path: str, replacements: Dict[str, str]):
-    """
-    Заменяет конфиденциальные данные в .docx файле и выделяет их желтым цветом.
-    replacements: словарь вида {"Иванов И.И.": "[МАСКА: ФИО]", "79991112233": "[МАСКА: ТЕЛЕФОН]"}
-    """
     doc = docx.Document(input_path)
+    sorted_replacements = _get_sorted_replacements(replacements)
 
-    def process_paragraphs(paragraphs):
-        for p in paragraphs:
-            for text_to_find, mask_text in replacements.items():
-                if text_to_find in p.text:
-                    # Посегментная замена внутри runs для сохранения оригинального стиля
+    def process_paragraph(p):
+        if not p.text or not p.text.strip():
+            return
+
+        for target, mask in sorted_replacements.items():
+            if not target or not target.strip():
+                continue
+
+            pattern = _build_flexible_regex(target)
+
+            # Проверяем наличие совпадения с учетом гибких пробелов
+            if pattern.search(p.text):
+                # 1. Пробуем заменить внутри отдельных runs
+                replaced_in_runs = False
+                for run in p.runs:
+                    if pattern.search(run.text):
+                        run.text = pattern.sub(mask, run.text)
+                        run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                        replaced_in_runs = True
+
+                # 2. Если текст разорван между runs, производим сквозную замену в параграфе
+                if not replaced_in_runs and pattern.search(p.text):
+                    new_text = pattern.sub(mask, p.text)
+                    p.text = new_text
                     for run in p.runs:
-                        if text_to_find in run.text:
-                            run.text = run.text.replace(text_to_find, mask_text)
-                            # Визуальная подсветка (желтый маркер)
-                            run.font.highlight_color = WD_COLOR_INDEX.YELLOW
+                        run.font.highlight_color = WD_COLOR_INDEX.YELLOW
 
-    # Обработка основного текста
-    process_paragraphs(doc.paragraphs)
+    # Обработка параграфов
+    for p in doc.paragraphs:
+        process_paragraph(p)
 
-    # Обработка текста внутри таблиц
+    # Обработка таблиц
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
-                process_paragraphs(cell.paragraphs)
+                for p in cell.paragraphs:
+                    process_paragraph(p)
+
+    # Обработка колонтитулов
+    for section in doc.sections:
+        for p in section.header.paragraphs:
+            process_paragraph(p)
+        for p in section.footer.paragraphs:
+            process_paragraph(p)
 
     doc.save(output_path)
 
 
 def mask_xlsx(input_path: str, output_path: str, replacements: Dict[str, str]):
-    """
-    Заменяет значения в ячейках .xlsx и подсвечивает ячейку желтой заливкой.
-    """
     wb = openpyxl.load_workbook(input_path)
     yellow_fill = PatternFill(start_color="FFFF00", end_color="FFFF00", fill_type="solid")
+    sorted_replacements = _get_sorted_replacements(replacements)
 
     for sheet in wb.worksheets:
         for row in sheet.iter_rows():
             for cell in row:
-                if cell.value and isinstance(cell.value, str):
+                if cell.value is not None:
                     cell_text = str(cell.value)
                     is_modified = False
-                    for text_to_find, mask_text in replacements.items():
-                        if text_to_find in cell_text:
-                            cell_text = cell_text.replace(text_to_find, mask_text)
+
+                    for target, mask in sorted_replacements.items():
+                        if not target or not target.strip():
+                            continue
+
+                        pattern = _build_flexible_regex(target)
+                        if pattern.search(cell_text):
+                            cell_text = pattern.sub(mask, cell_text)
                             is_modified = True
 
                     if is_modified:
@@ -63,27 +110,31 @@ def mask_xlsx(input_path: str, output_path: str, replacements: Dict[str, str]):
 
 
 def mask_pdf(input_path: str, output_path: str, replacements: Dict[str, str]):
-    """
-    Находит текст в PDF, накладывает аннотацию редакции (redaction/mask)
-    с заливкой цветом и новым текстом маркера.
-    """
     doc = fitz.open(input_path)
+    sorted_replacements = _get_sorted_replacements(replacements)
 
     for page in doc:
-        for text_to_find, mask_text in replacements.items():
-            # Поиск координат (bounding box) всех совпадений текста
-            text_instances = page.search_for(text_to_find)
+        for target, mask in sorted_replacements.items():
+            if not target or not target.strip():
+                continue
 
-            for inst in text_instances:
-                # Добавление области под замену (Redaction annotation)
-                page.add_redact_annot(
-                    inst,
-                    text=mask_text,
-                    fill=(1, 1, 0),  # RGB: Желтый фон заднего плана (1, 1, 0)
-                    text_color=(0, 0, 0),  # RGB: Черный цвет текста
-                    fontsize=9
-                )
-        # Применение всех маскировок на странице (физическое удаление старого текста)
+            # Варианты поиска для PDF с учетом неразрывных пробелов
+            search_variants = [
+                target.strip(),
+                re.sub(r'\s+', ' ', target.strip()),
+                re.sub(r'\s+', '\xa0', target.strip())
+            ]
+
+            for var in search_variants:
+                text_instances = page.search_for(var)
+                for inst in text_instances:
+                    page.add_redact_annot(
+                        inst,
+                        text=mask,
+                        fill=(1, 1, 0),
+                        text_color=(0, 0, 0),
+                        fontsize=8
+                    )
         page.apply_redactions()
 
     doc.save(output_path)

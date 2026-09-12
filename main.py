@@ -2,6 +2,9 @@ import os
 import sys
 from typing import Dict, List, Type
 
+# Для удобства работы с переменными окружения (.env)
+from dotenv import load_dotenv
+
 # 1. Импорт интерфейсов и структур данных
 from interfaces import ParserInterface, ParsedDocument, MaskedEntity, LLMInterface
 
@@ -17,6 +20,9 @@ from llm_layer import GigaChatLLM, LocalOllamaLLM
 from interactive_validator import InteractiveValidator
 from document_masker import mask_docx, mask_xlsx, mask_pdf
 
+# Загружаем переменные из файла .env (если он есть)
+load_dotenv()
+
 
 def debug_missing_entities_session(llm, document_text: str, extracted_entities: dict):
     """
@@ -29,19 +35,25 @@ def debug_missing_entities_session(llm, document_text: str, extracted_entities: 
     print("Введите 'next' или 'exit' для перехода к Шагу 3 (Валидатор).")
     print("=" * 60 + "\n")
 
-    # Инициализируем историю диалога системным контекстом
+    # Передаем только список исходных найденных значений, исключая плейсхолдеры [..._REDACTED]
+    found_raw_entities = list(extracted_entities.keys())
+
     history = [
         {
             "role": "system",
-            "content": "Ты — AI-ассистент. Ранее ты анализировал документ и извлекал из него сущности."
+            "content": (
+                "Ты — AI-ассистент. Ранее ты анализировал СЫРОЙ (НЕ замаскированный) текст документа и извлекал из него сущности. "
+                "В тексте ниже ВСЕ персональные данные сохранены в оригинальном виде. "
+                "Отвечай на вопросы пользователя о том, почему некоторые конкретные сущности не попали в список извлеченных."
+            )
         },
         {
             "role": "user",
-            "content": f"Вот текст документа, который ты анализировал:\n---\n{document_text[:8000]}\n---\n\nВот сущности, которые ты извлек:\n{extracted_entities}"
+            "content": f"Вот ИСХОДНЫЙ (НЕ замаскированный) текст документа:\n---\n{document_text[:15000]}\n---\n\nВот список ТОЧНЫХ строк, которые ты смог извлечь на данный момент:\n{found_raw_entities}"
         },
         {
             "role": "assistant",
-            "content": "Я ознакомился с документом и списком извлеченных сущностей. Готов ответить на твои вопросы по качеству извлечения."
+            "content": "Я ознакомился с исходным текстом документа и текущим списком извлеченных сущностей. Готов ответить на твои вопросы."
         }
     ]
 
@@ -55,20 +67,17 @@ def debug_missing_entities_session(llm, document_text: str, extracted_entities: 
         if not user_query:
             continue
 
-        # Добавляем вопрос пользователя в историю
         history.append({"role": "user", "content": user_query})
 
         try:
-            # Получаем ответ от LLM с учетом всего контекста
             bot_response = llm.chat_with_history(history)
-
-            # Сохраняем ответ модели в историю для следующего уточняющего вопроса
             history.append({"role": "assistant", "content": bot_response})
 
             print(f"\n🤖 [GigaChat]: {bot_response}\n")
             print("-" * 60)
         except Exception as e:
             print(f"⚠️ Ошибка при запросе к GigaChat: {e}\n")
+
 
 def get_parser(file_extension: str) -> ParserInterface:
     """
@@ -113,24 +122,19 @@ def run_pipeline(file_path: str, output_path: str = None):
     # -------------------------------------------------------------
     print("\n[2/4] Запуск LLM для поиска конфиденциальных сущностей...")
 
-    # Можно легко сменить реализацию на LocalOllamaLLM() при необходимости
     try:
-        # При необходимости передайте access_token авторизации
-        llm: LLMInterface = GigaChatLLM("eyJjdHkiOiJqd3QiLCJlbmMiOiJBMjU2Q0JDLUhTNTEyIiwiYWxnIjoiUlNBLU9BRVAtMjU2In0.azzKwJsitXy-cvQ9OnrWsnJyeplXq1It76tJIKuV75kY23uNF9FvMT8OzEutv-v1g2z0yTohz9D2wIKoya7HH094KwT7aONYoF0xFgL3V8DDEsxVSUD-Lx8Y4T_57uiAf2r82MPNFxsuQgaMRHwNuS6UW10GzI56Si5U6uOw6ypzRJs83555PUHvkVuDG9g3IgDGb9JH-yMPfsigwTlYFOEyglLshbdfEZbBzltHyDAVrsjG0jqzPDEPmDdImBGwN0Xgr7Qrp0LJFFomIu9tz8J2aFZfBvnSdpAx94YpzUw1bvwDzkeDJGiAExksZpTUXohtdUF9bGmoGRKtfxXr2w.tF2CmDSw_fqlygI0MgfCQQ.1AlaxaPCgt55PePFhd-cw6SDpecZrDCd9AyfG_rfQkqhV3mm_kmPFZoyWl2FXNoFg6H8Ey062V7tdn3qNHV0izAXQA9ePronlUBpDy2bFC1nOJHJp36xt8R-yQ_g4V36hg9qyAT5_YScwgZ_nPDzdhE0cY7vsj4Nw5RyXvChRl2bzJEul2GJ5LyUqGeC09P-Pyehxkt3Xm95LcDUDgf29fPAZfuiRjX0unLPHE3KW97g6ldeiA_kOu_VQkwu9FoJ7HSe-PT002-CWye3WkwByvFvodPHRcS-Rbsp9Gd0gi_9nssliXEv4edA45WA6i2rjoReXYdKIJ1FweBF6lw0qqD1cl4x5b-zmMLnLoNpa_l62bk8hEOT9CFVKwmzjwVQWmYUcGWbH-KKYt5nPtkI4o8U31SSr6CzZ5ioK2cI79CreuChxtwgh6Cf75Qsl9hmQ_nQPgRVr6ubaMmaE5RsDy6MfdoPiDGYFQUnHsFRK9PDVMFHQVciZ0GwDpw1_OfciCOi8coreOEw0MO9E1OAD4P5gonrIfi6T70zN_mvwhxT5Q1DqKFjhwsXzBiNC_jRjOnlP3sS12h655bH0HWME3MfPfbCeiOFlb69iZgdAbCnQU73P-koK6UvPVRIGX8-jlNKEIESz23EKaP23oE1bI2khnYrcyfbDPsNBhn6I_w-blrfp4orCnmUoVJqS59blsASdFICwpfuCASuqxK2_8Jrz91j1YCdMUmzCz-Jzzw.zHvxrL6KqwQ1VqyFMFv_5HQuRInkmwKvVFVLWIw7C1Y")
+        gigachat_credentials = os.getenv("GIGACHAT_CREDENTIALS")
+        llm: LLMInterface = GigaChatLLM(credentials=gigachat_credentials)
     except Exception as e:
         print(f"⚠️ Ошибка инициализации GigaChatLLM ({e}). Использование фоллбэка.")
         llm: LLMInterface = LocalOllamaLLM()
 
-
-
     # Целевые типы данных для извлечения (в соответствии с ТЗ)
-    target_types = ['INN', 'PHONE', 'PARTY', 'EMAIL', 'PASSPORT', 'ADDRESS', 'FIO', 'CONFIDENTIAL DATA']
+    target_types = ['INN', 'PHONE', 'PARTY', 'EMAIL', 'PASSPORT', 'ADDRESS', 'FIO']
 
     # Получение структурных объектов MaskedEntity от слоя LLM
     extracted_entities_list: List[MaskedEntity] = llm.extract_entities(parsed_doc, target_types)
 
-    # Преобразование результатов извлечения в словарь replacements {"исходный_текст": "маска"}
-    # для дальнейшей передачи в валидатор и маскировщик
     initial_replacements: Dict[str, str] = {
         entity.original_text: entity.masked_text
         for entity in extracted_entities_list
@@ -152,7 +156,6 @@ def run_pipeline(file_path: str, output_path: str = None):
     print("\n[3/4] Запуск модуля проверки полноты и интерактивной валидации...")
     validator = InteractiveValidator(llm_client=llm)
 
-    # Валидатор опрашивает пользователя при наличии неопределенностей и достраивает словарь
     final_replacements: Dict[str, str] = validator.validate_and_clarify(
         document_text=parsed_doc.full_text,
         extracted_entities=initial_replacements

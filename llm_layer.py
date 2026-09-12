@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -37,18 +38,33 @@ class GigaChatLLM(LLMInterface):
         cleaned = re.sub(r'\s+', ' ', text)
         return cleaned.strip()
 
-    def __init__(self, access_token: Optional[str] = None, model_name: str = "GigaChat"):
+    def __init__(self, credentials: Optional[str] = None, model_name: str = "GigaChat"):
         """
-        :param credentials: Токен авторизации GigaChat (или из переменной окружения GIGACHAT_CREDENTIALS)
+        :param credentials: Постоянный Base64-ключ / Client Secret (или из переменной окружения GIGACHAT_CREDENTIALS)
         :param model_name: Название модели (GigaChat, GigaChat-Pro и т.д.)
         """
         if not GIGACHAT_AVAILABLE:
             raise ImportError("Пакет 'gigachat' не установлен. Установите через: pip install gigachat")
 
-        self.access_token = access_token
+        # Если credentials не переданы напрямую, берем из переменной окружения
+        self.credentials = credentials or os.getenv("GIGACHAT_CREDENTIALS")
+
+        if not self.credentials:
+            raise ValueError(
+                "Не указаны credentials для GigaChat. Передайте параметр credentials в конструктор "
+                "или установите переменную окружения GIGACHAT_CREDENTIALS в .env файле."
+            )
+
         self.model_name = model_name
-        # Отключаем верификацию SSL для работы с сертификатами Минцифры
-        self.client = GigaChat(access_token=self.access_token, base_url="https://gigachat.devices.sberbank.ru/api/v1", verify_ssl_certs=False, model=self.model_name)
+
+        # Передаем credentials вместо access_token.
+        # SDK GigaChat будет автоматически запрашивать и обновлять access_token по мере его истечения.
+        self.client = GigaChat(
+            credentials=self.credentials,
+            base_url="https://gigachat.devices.sberbank.ru/api/v1",
+            verify_ssl_certs=False,
+            model=self.model_name
+        )
 
     def generate(self, prompt: str, **kwargs) -> str:
         """Базовый метод генерации текста"""
@@ -76,37 +92,60 @@ class GigaChatLLM(LLMInterface):
             return []
 
         clean_text = self._clean_text_for_llm(parsed_doc.full_text)
-        text_to_analyze = clean_text[:12000]
+        text_to_analyze = clean_text[:15000]
 
-        prompt = f"""
-Ты — AI-ассистент по деидентификации и анонимизации документов.
+        prompt = f"""ТВОЯ РОЛЬ:
+Ты — легковесный NER-движок (модуль извлечения данных), работающий в составе мультиагентной системы деидентификации.
+Твоя единственная задача — высокоточное распознавание конфиденциальных сущностей в готовом плоском тексте.
+Ты НЕ работаешь с файлами напрямую, не меняешь структуру документа, не занимаешься его версткой и не сохраняешь файлы.
+Твой приоритет — максимальная полнота (recall) при строгом соблюдении заданного JSON-формата.
+
 Проанализируй текст документа и найди в нем все упоминания следующих типов данных: {target_types}.
 
-Особые правила для типа 'PARTY' (Стороны договора):
-- Определи, кто является Поставщиком/Исполнителем/Продавцом (присвой entity_type = 'SUPPLIER').
-- Определи, кто является Покупателем/Заказчиком/Клиентом (присвой entity_type = 'BUYER').
+ОГРАНИЧЕНИЯ СРЕДЫ И РЕСУРСЫ:
+1. Выдавай ответ мгновенно. Никакой вежливой беседы, приветствий, вводных фраз или пояснений. Ответ должен начинаться сразу с открывающей фигурной скобки '{{'.
+2. Инвариантность текста: сохраняй каждый символ исходного текста (UTF-8, \\n, \\t, пробелы). Не проводи лингвистическую нормализацию, не исправляй опечатки и не меняй регистр букв в поле 'original_text'.
+3. Если сущность найдена внутри слова или разрезана переносом строки — не пытайся её склеить или расширить, извлекай ровно то, что присутствует в тексте.
+
+СПЕЦИАЛЬНЫЕ ПРАВИЛА ИЗВЛЕЧЕНИЯ:
+1. **FIO (ФИО):** Извлекай как полные имена (Иванов Иван Иванович), так и сокращения с инициалами (Соколов Д.А., Д.А. Соколов).
+2. **KPP (КПП):** Обязательно извлекай 9-значные коды КПП (например, 366601010, КПП 366201001).
+3. **PHONE (Телефоны):** Извлекай ВСЕ номера телефонов независимо от формата (+7 (473) 255-43-21, 84732554321, 255-43-21 и т.д.).
+4. **ADDRESS (Адреса):** Извлекай любые адреса целиком, включая юр. адреса, факические адреса, номера офисов, зданий и строений (например, '394006, г. Воронеж, ул. Свободы, д. 73, офис 402').
+5. **PARTY (Стороны договора):**
+   - Для Поставщика/Исполнителя/Продавца указывай entity_type = 'SUPPLIER'.
+   - Для Покупателя/Заказчика/Клиента указывай entity_type = 'BUYER'.
+   - Если роль неясна, указывай entity_type = 'PARTY'.
+
+ПРАВИЛА ДЛЯ ТИПА 'PARTY' (Стороны договора):
+Если в {target_types} присутствует 'PARTY':
+- Для стороны, выступающей Поставщиком / Исполнителем / Продавцом / Подрядчиком, указывай entity_type = 'SUPPLIER'.
+- Для стороны, выступающей Покупателем / Заказчиком / Клиентом, указывай entity_type = 'BUYER'.
+- Если конкретную роль определить невозможно, указывай entity_type = 'PARTY'.
 
 ОБЯЗАТЕЛЬНОЕ УСЛОВИЕ:
-В поле 'target_types_received' перечисли ВСЕ типы сущностей, которые тебя попросили найти в этом запросе.
+В поле 'target_types_received' перечисли ВСЕ типы сущностей, которые тебя попросили найти в этом запросе: {target_types}.
 
-Ответ должен быть СТРОГО валидным JSON-объектом без вводных слов.
+Ответ должен быть СТРОГО валидным JSON-объектом без Markdown-разметки (не используй ```json ... ```).
+
 Структура JSON:
 {{
-  "target_types_received": ["ТИП_1", "ТИП_2"],
+  "target_types_received": {target_types},
   "entities": [
     {{
       "original_text": "ТОЧНЫЙ_ТЕКСТ_ИЗ_ДОКУМЕНТА",
       "entity_type": "ТИП_СУЩНОСТИ",
-      "confidence": 0.95
+      "confidence": 0.95,
+      "redacted_placeholder": "[МАРКЕР_ЗАМЕНЫ]"
     }}
   ]
 }}
 
 Текст документа для анализа:
 ---
-{text_to_analyze} 
----
-"""
+{text_to_analyze}
+---"""
+
         raw_response = self.generate(prompt)
         return self._parse_llm_json_response(raw_response, parsed_doc.full_text)
 
@@ -119,7 +158,6 @@ class GigaChatLLM(LLMInterface):
 
             data = json.loads(json_match.group(0))
 
-            # ВЫВОД В КОНСОЛЬ: что модель поняла из вашего промпта
             received_types = data.get("target_types_received", [])
             print(f"\n🤖 [GigaChat ответил]: Я ищу следующие типы сущностей: {received_types}\n")
 
@@ -161,12 +199,15 @@ class LocalOllamaLLM(LLMInterface):
         self.model_name = model_name
 
     def generate(self, prompt: str, **kwargs) -> str:
-        # Здесь будет вызов локального API Ollama (http://localhost:11434/api/generate)
         return '{"entities": []}'
 
     def chat_with_history(self, messages: list) -> str:
-        """Заглушка для локальной модели"""
         return "Локальная модель не поддерживает контекст диалога."
 
     def get_embedding(self, text: str) -> List[float]:
+        return []
+
+    def extract_entities(self, parsed_doc: ParsedDocument, target_types: List[str]) -> List[MaskedEntity]:
+        """Заглушка для извлечения сущностей при отсутствии доступа к GigaChat"""
+        print("⚠️ Используется фоллбэк LocalOllamaLLM: сущности не извлечены.")
         return []
