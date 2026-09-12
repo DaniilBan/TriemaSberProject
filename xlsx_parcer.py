@@ -6,17 +6,11 @@ from interfaces import ParserInterface, ParsedDocument
 
 
 class XlsxParser(ParserInterface):
-    """
-    Класс для парсинга Excel-документов (.xlsx).
-    Извлекает данные по листам, сохраняет структуру таблиц
-    и формирует сплошной текст для передачи в LLM.
-    """
 
     def parse(self, file_path: str) -> ParsedDocument:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Файл {file_path} не найден!")
 
-        # Загружаем книгу. data_only=True берет значения ячеек, а не формулы
         wb = openpyxl.load_workbook(file_path, data_only=True)
 
         pages_or_sheets: Dict[str, str] = {}
@@ -33,19 +27,15 @@ class XlsxParser(ParserInterface):
                     val = str(cell.value) if cell.value is not None else ""
                     row_vals.append(val.strip())
 
-                # Исключаем полностью пустые строки
                 if any(row_vals):
-                    # Для текстового представления соединяем непустые ячейки через разделитель
                     non_empty_vals = [v for v in row_vals if v]
                     sheet_lines.append(" | ".join(non_empty_vals))
                     sheet_matrix.append(row_vals)
 
-            # Формируем текст отдельного листа
             sheet_text = "\n".join(sheet_lines)
             pages_or_sheets[sheet.title] = sheet_text
             full_text_list.append(f"=== Лист: {sheet.title} ===\n" + sheet_text)
 
-            # Сохраняем табличные данные листа
             extracted_tables.append({
                 "sheet_name": sheet.title,
                 "data": sheet_matrix
@@ -66,7 +56,6 @@ class XlsxParser(ParserInterface):
         )
 
 
-# --- Проверка работы парсера ---
 if __name__ == "__main__":
     test_xlsx = "sample_table.xlsx"
     if os.path.exists(test_xlsx):

@@ -18,13 +18,9 @@ def _get_sorted_replacements(replacements: Dict[str, str]) -> Dict[str, str]:
 
 
 def _build_flexible_regex(target_text: str) -> re.Pattern:
-    """
-    Строит регулярное выражение, которое игнорирует разницу между
-    обычными пробелами, неразрывными пробелами (\xa0) и множественными пробелами.
-    """
-    # Экранируем спецсимволы
+
     escaped = re.escape(target_text.strip())
-    # Заменяем экранированные пробелы на шаблон, подходящий под ЛЮБЫЕ пробельные символы (\s+)
+
     pattern_str = re.sub(r'\\?\s+', r'\\s+', escaped)
     return re.compile(pattern_str, re.IGNORECASE)
 
@@ -43,9 +39,9 @@ def mask_docx(input_path: str, output_path: str, replacements: Dict[str, str]):
 
             pattern = _build_flexible_regex(target)
 
-            # Проверяем наличие совпадения с учетом гибких пробелов
+
             if pattern.search(p.text):
-                # 1. Пробуем заменить внутри отдельных runs
+
                 replaced_in_runs = False
                 for run in p.runs:
                     if pattern.search(run.text):
@@ -53,25 +49,21 @@ def mask_docx(input_path: str, output_path: str, replacements: Dict[str, str]):
                         run.font.highlight_color = WD_COLOR_INDEX.YELLOW
                         replaced_in_runs = True
 
-                # 2. Если текст разорван между runs, производим сквозную замену в параграфе
                 if not replaced_in_runs and pattern.search(p.text):
                     new_text = pattern.sub(mask, p.text)
                     p.text = new_text
                     for run in p.runs:
                         run.font.highlight_color = WD_COLOR_INDEX.YELLOW
 
-    # Обработка параграфов
     for p in doc.paragraphs:
         process_paragraph(p)
 
-    # Обработка таблиц
     for table in doc.tables:
         for row in table.rows:
             for cell in row.cells:
                 for p in cell.paragraphs:
                     process_paragraph(p)
 
-    # Обработка колонтитулов
     for section in doc.sections:
         for p in section.header.paragraphs:
             process_paragraph(p)
@@ -118,7 +110,6 @@ def mask_pdf(input_path: str, output_path: str, replacements: Dict[str, str]):
             if not target or not target.strip():
                 continue
 
-            # Варианты поиска для PDF с учетом неразрывных пробелов
             search_variants = [
                 target.strip(),
                 re.sub(r'\s+', ' ', target.strip()),

@@ -8,13 +8,13 @@ class MaskedEntity(BaseModel):
     masked_text: str
     start_pos: int
     end_pos: int
-    entity_type: str  # 'INN', 'PHONE', 'EMAIL', 'COMPANY_NAME' и т.д.
-    confidence: float  # 0.0-1.0
+    entity_type: str
+    confidence: float
 
 
 class ParsedDocument(BaseModel):
     filename: str
-    file_type: str  # 'docx', 'xlsx', 'pdf'
+    file_type: str
     full_text: str
     pages_or_sheets: Dict[str, str]
     tables: Optional[List[Dict[str, Any]]]

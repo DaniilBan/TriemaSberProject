@@ -13,28 +13,21 @@ from interfaces import ParserInterface, ParsedDocument
 
 
 class DocxParser(ParserInterface):
-    """
-    Класс для парсинга файлов Word (.docx).
-    Извлекает текст с сохранением хронологии, гиперссылок,
-    сложной структуры таблиц и подстрочных/концевых сносок.
-    """
 
     def parse(self, file_path: str) -> ParsedDocument:
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"Файл {file_path} не найден!")
 
-        # 1. Извлечение сносок через docx2python
         content = docx2python(file_path)
         footnotes_map = self._parse_notes(content.footnotes)
         endnotes_map = self._parse_notes(content.endnotes)
 
-        # 2. Основной парсинг документа через python-docx
         document = Document(file_path)
         document_timeline: List[str] = []
         extracted_tables: List[Dict[str, Any]] = []
 
         for element in document.element.body:
-            # Если элемент — Таблица
+
             if element.tag.endswith('tbl'):
                 table = Table(element, document)
                 table_rows_data = []
@@ -59,7 +52,6 @@ class DocxParser(ParserInterface):
                     "data": table_rows_data
                 })
 
-            # Если элемент — Абзац
             elif element.tag.endswith('paragraph') or element.tag.endswith('}p'):
                 paragraph_obj = Paragraph(element, document)
                 cleaned_text = self._extract_text_from_paragraph(
@@ -70,7 +62,6 @@ class DocxParser(ParserInterface):
 
         full_text = "\n".join(document_timeline)
 
-        # 3. Формирование итогового Pydantic-объекта
         return ParsedDocument(
             filename=os.path.basename(file_path),
             file_type="docx",
@@ -86,7 +77,6 @@ class DocxParser(ParserInterface):
         )
 
     def _parse_notes(self, notes_content: List) -> Dict[int, str]:
-        """Вспомогательный метод парсинга сносок из docx2python"""
         notes_map = defaultdict(str)
         i = 1
         for note in notes_content:
@@ -119,10 +109,8 @@ class DocxParser(ParserInterface):
             footnotes_map: Dict[int, str],
             endnotes_map: Dict[int, str]
     ) -> str:
-        """Извлечение текста из абзаца с учетом ссылок и XML-сносок"""
         text = ""
 
-        # Обработка содержимого и ссылок
         for child in paragraph.iter_inner_content():
             if isinstance(child, Run):
                 text += child.text
@@ -132,7 +120,6 @@ class DocxParser(ParserInterface):
                 url = doc.part.rels[r_id].target_ref if r_id and r_id in doc.part.rels else ""
                 text += f'<a href="{url}">{visible_text}</a>'
 
-        # Обработка сносок через XML
         w = '{http://schemas.openxmlformats.org/wordprocessingml/2006/main}'
 
         for ref in paragraph._element.findall('.//' + w + 'footnoteReference'):
@@ -150,9 +137,7 @@ class DocxParser(ParserInterface):
         return text.replace('\n', ' ').strip()
 
 
-# --- Проверка работы парсера ---
 if __name__ == "__main__":
-    # Тестовый запуск
     test_file = "demo.docx"
     if os.path.exists(test_file):
         parser = DocxParser()

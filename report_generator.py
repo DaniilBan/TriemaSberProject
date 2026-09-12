@@ -5,7 +5,6 @@ from typing import Dict, Any, List
 
 
 class ReportGenerator:
-    """Генератор отчетов о замене конфиденциальных данных."""
 
     @staticmethod
     def save_json_report(
@@ -15,9 +14,6 @@ class ReportGenerator:
             final_replacements: List[Dict[str, Any]],
             report_path: str = None
     ) -> str:
-        """
-        Сохраняет отчет о заменах в формате JSON.
-        """
         if not report_path:
             base_name = os.path.splitext(output_filename)[0]
             report_path = f"{base_name}_report.json"
@@ -47,9 +43,6 @@ class ReportGenerator:
             final_replacements: List[Dict[str, Any]],
             report_path: str = None
     ) -> str:
-        """
-        Сохраняет человекочитаемый отчет в формате TXT.
-        """
         if not report_path:
             base_name = os.path.splitext(output_filename)[0]
             report_path = f"{base_name}_report.txt"

@@ -4,10 +4,6 @@ from typing import Dict, List, Tuple, Any
 
 
 class InteractiveValidator:
-    """
-    Валидатор полноты извлеченных данных на базе LLM с поддержкой
-    интерактивного диалога для уточнения неопределенностей.
-    """
 
     def __init__(self, llm_client):
         self.llm = llm_client
@@ -57,9 +53,7 @@ class InteractiveValidator:
 }}"""
 
     def _parse_json_from_response(self, response_text: str) -> dict:
-        """Вспомогательный метод для безошибочного извлечения JSON из ответа LLM."""
         try:
-            # Ищем фигурные скобки с содержимым (включая переводы строк)
             json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
             if json_match:
                 return json.loads(json_match.group(0))
@@ -77,20 +71,16 @@ class InteractiveValidator:
         prompt = self._build_validation_prompt(document_text, current_replacements)
         response_raw = self.llm.generate(prompt)
 
-        # Безопасное извлечение JSON
         validation_result = self._parse_json_from_response(response_raw)
 
-        # Если распарсить результат не удалось, сохраняем то, что уже было найдено
         if not validation_result:
             print("[INFO] Не удалось распарсить ответ валидатора. Используются первичные сущности.")
             return current_replacements
 
-        # Проверка статуса
         if validation_result.get("status") == "COMPLETE":
             print("[INFO] Проверка полноты завершена успешно. Неопределенностей не обнаружено.")
             return current_replacements
 
-        # Если требуются уточнения
         questions = validation_result.get("questions", [])
         if questions:
             print("\n" + "=" * 50)

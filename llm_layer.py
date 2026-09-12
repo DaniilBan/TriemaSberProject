@@ -7,7 +7,6 @@ from pydantic import BaseModel, Field
 # Импортируем интерфейс проекта
 from interfaces import LLMInterface, MaskedEntity, ParsedDocument
 
-# Попытка импорта официального SDK GigaChat
 try:
     from gigachat import GigaChat
 
@@ -16,37 +15,26 @@ except ImportError:
     GIGACHAT_AVAILABLE = False
 
 
-# --- 1. Модель структурированного ответа от LLM ---
 class ExtractionResult(BaseModel):
     entities: List[Dict[str, Any]] = Field(
         description="Список найденных конфиденциальных сущностей"
     )
 
 
-# --- 2. Реализация слоя GigaChat ---
 class GigaChatLLM(LLMInterface):
-    """
-    Изолированный провайдер для работы с GigaChat.
-    Отвечает за извлечение сущностей (ИНН, Телефоны, Поставщики и др.) из ParsedDocument.
-    """
+
 
     def _clean_text_for_llm(self, text: str) -> str:
-        """Нормализация текста для сглаживания разницы между PDF и DOCX"""
         if not text:
             return ""
-        # Заменяем все разрывы и множественные пробелы на одиночные
         cleaned = re.sub(r'\s+', ' ', text)
         return cleaned.strip()
 
     def __init__(self, credentials: Optional[str] = None, model_name: str = "GigaChat"):
-        """
-        :param credentials: Постоянный Base64-ключ / Client Secret (или из переменной окружения GIGACHAT_CREDENTIALS)
-        :param model_name: Название модели (GigaChat, GigaChat-Pro и т.д.)
-        """
+
         if not GIGACHAT_AVAILABLE:
             raise ImportError("Пакет 'gigachat' не установлен. Установите через: pip install gigachat")
 
-        # Если credentials не переданы напрямую, берем из переменной окружения
         self.credentials = credentials or os.getenv("GIGACHAT_CREDENTIALS")
 
         if not self.credentials:
@@ -57,8 +45,6 @@ class GigaChatLLM(LLMInterface):
 
         self.model_name = model_name
 
-        # Передаем credentials вместо access_token.
-        # SDK GigaChat будет автоматически запрашивать и обновлять access_token по мере его истечения.
         self.client = GigaChat(
             credentials=self.credentials,
             base_url="https://gigachat.devices.sberbank.ru/api/v1",
@@ -67,14 +53,12 @@ class GigaChatLLM(LLMInterface):
         )
 
     def generate(self, prompt: str, **kwargs) -> str:
-        """Базовый метод генерации текста"""
+
         response = self.client.chat(prompt)
         return response.choices[0].message.content
 
     def chat_with_history(self, messages: list) -> str:
-        """
-        Метод для ведения контекстного диалога с передачей истории сообщений.
-        """
+
         payload = {
             "model": self.model_name,
             "messages": messages
@@ -83,7 +67,7 @@ class GigaChatLLM(LLMInterface):
         return response.choices[0].message.content
 
     def get_embedding(self, text: str) -> List[float]:
-        """Получение эмбеддингов текста"""
+
         response = self.client.embeddings(texts=[text])
         return response.data[0].embedding
 
@@ -188,12 +172,8 @@ class GigaChatLLM(LLMInterface):
         return masked_entities
 
 
-# --- 3. Альтернативный провайдер для локальной модели (например, Ollama) ---
 class LocalOllamaLLM(LLMInterface):
-    """
-    Заглушка/Альтернатива для локальных моделей (Ollama / Llama / Saiga).
-    Позволяет соблюсти Пункт 6 ТЗ (быстрая замена модели без переписывания логики).
-    """
+
 
     def __init__(self, model_name: str = "llama3"):
         self.model_name = model_name
@@ -208,6 +188,5 @@ class LocalOllamaLLM(LLMInterface):
         return []
 
     def extract_entities(self, parsed_doc: ParsedDocument, target_types: List[str]) -> List[MaskedEntity]:
-        """Заглушка для извлечения сущностей при отсутствии доступа к GigaChat"""
         print("⚠️ Используется фоллбэк LocalOllamaLLM: сущности не извлечены.")
         return []

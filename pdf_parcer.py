@@ -1,9 +1,9 @@
 import os
 from typing import List, Dict, Any, Optional
 import pdfplumber
+import pymupdf
 from pydantic import BaseModel
 
-# Попытка импорта OCR библиотек
 try:
     from pdf2image import convert_from_path
     import pytesseract
@@ -15,10 +15,6 @@ from interfaces import ParserInterface, ParsedDocument
 
 
 class PdfParser(ParserInterface):
-    """
-    Класс для парсинга PDF-документов.
-    Поддерживает извлечение встроенного текста, таблиц и OCR для сканов.
-    """
 
     def parse(self, file_path: str) -> ParsedDocument:
         if not os.path.exists(file_path):
@@ -36,7 +32,6 @@ class PdfParser(ParserInterface):
                 page_num = i + 1
                 page_text = page.extract_text() or ""
 
-                # --- ПУНКТ ТЗ (*): Поддержка сканированных PDF (OCR) ---
                 if not page_text.strip():
                     ocr_text = self._apply_ocr_to_page(file_path, page_num)
                     if ocr_text:
@@ -46,11 +41,9 @@ class PdfParser(ParserInterface):
                 pages_dict[f"Page_{page_num}"] = page_text
                 full_text_list.append(f"--- Страница {page_num} ---\n{page_text}")
 
-                # --- Извлечение таблиц ---
                 tables = page.extract_tables()
                 for table in tables:
                     if table:
-                        # Очистка ячеек от None и форматирование строк
                         cleaned_table = [
                             [cell.strip() if cell else "" for cell in row]
                             for row in table
@@ -76,20 +69,17 @@ class PdfParser(ParserInterface):
         )
 
     def _apply_ocr_to_page(self, file_path: str, page_num: int) -> str:
-        """Извлечение текста из изображения (скана) с помощью Optical Character Recognition (OCR)"""
         if not OCR_AVAILABLE:
             print("⚠️ OCR библиотеки не установлены (pdf2image, pytesseract). Пропуск скана.")
             return ""
 
         try:
-            # Конвертируем нужную страницу PDF в PIL-изображение
             images = convert_from_path(
                 file_path,
                 first_page=page_num,
                 last_page=page_num
             )
             if images:
-                # Распознаем русско-английский текст
                 text = pytesseract.image_to_string(images[0], lang='rus+eng')
                 return text.strip()
         except Exception as e:
@@ -98,7 +88,6 @@ class PdfParser(ParserInterface):
         return ""
 
 
-# --- Проверка работы ---
 if __name__ == "__main__":
     test_pdf = "sample-table.pdf"
     if os.path.exists(test_pdf):
