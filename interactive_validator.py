@@ -1,12 +1,20 @@
 import json
 import re
-from typing import Dict, List, Tuple, Any
+from typing import Callable, Dict, Optional
 
 
 class InteractiveValidator:
 
-    def __init__(self, llm_client):
+    def __init__(self, llm_client, ask_callback: Optional[Callable[[str], str]] = None):
+        """
+        Args:
+            llm_client: клиент LLM.
+            ask_callback: функция, которая показывает вопрос пользователю и
+                возвращает его ответ. По умолчанию — input().
+                Для GUI передаётся модальное окно.
+        """
         self.llm = llm_client
+        self.ask = ask_callback or (lambda prompt: input(prompt))
 
     def _build_validation_prompt(self, document_text: str, extracted_entities: Dict[str, str]) -> str:
         return f"""Ты — модуль валидации и контроля качества извлечения конфиденциальных данных из документов.
@@ -22,8 +30,8 @@ class InteractiveValidator:
 
 Инструкция по проверке:
 1. Изучи типы данных среди УЖЕ найденных сущностей (entity_type). Ищи пропуски ИСКЛЮЧИТЕЛЬНО для этих типов.
-2. Проверь полноту: нет ли в тексте явно пропущенных сущностей аналогичных типов (например, ИНН Заказчика замаскирован, а ИНН Поставщика в реквизитах пропущен).
-3. Проверь связность: если среди найденных типов есть Стороны договора ('BUYER' / 'SUPPLIER'), определены ли обе стороны и нет ли неопределенности в их реквизитах.
+2. Проверь полноту: нет ли в тексте явно пропущенных сущностей аналогичных типов.
+3. Проверь связность: если среди найденных типов есть Стороны договора ('BUYER' / 'SUPPLIER'), определены ли обе стороны.
 4. Критерии статуса:
    - Если явных пропусков найденных типов нет -> "status": "COMPLETE"
    - Если есть критические пропуски или неопределенности -> "status": "NEEDS_CLARIFICATION"
@@ -88,8 +96,9 @@ class InteractiveValidator:
             print("=" * 50)
 
             for idx, question in enumerate(questions, 1):
-                print(f"\nВопрос {idx}: {question}")
-                user_answer = input("Ваш ответ (или нажмите Enter, чтобы пропустить): ").strip()
+                user_answer = self.ask(
+                    f"Вопрос {idx}: {question}\nВаш ответ (или Enter, чтобы пропустить): "
+                ).strip()
 
                 if user_answer:
                     clarify_prompt = f"""

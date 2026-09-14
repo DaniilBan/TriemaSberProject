@@ -1,0 +1,11 @@
+{
+    "timestamp": "2026-09-14T02:07:59.305497",
+    "source_file": "test_1list.docx",
+    "masked_file": "test_1list_masked.docx",
+    "stats": {
+        "initial_detected_count": 0,
+        "final_masked_count": 0
+    },
+    "initial_replacements": [],
+    "final_replacements": []
+}

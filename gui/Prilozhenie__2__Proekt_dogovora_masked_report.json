@@ -1,0 +1,11 @@
+{
+    "timestamp": "2026-09-14T01:43:43.764363",
+    "source_file": "Prilozhenie__2__Proekt_dogovora.docx",
+    "masked_file": "Prilozhenie__2__Proekt_dogovora_masked.docx",
+    "stats": {
+        "initial_detected_count": 0,
+        "final_masked_count": 0
+    },
+    "initial_replacements": [],
+    "final_replacements": []
+}

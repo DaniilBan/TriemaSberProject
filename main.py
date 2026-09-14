@@ -1,5 +1,6 @@
 import os
 import sys
+from pathlib import Path
 from typing import Dict, List, Type, Any
 
 from dotenv import load_dotenv
@@ -20,7 +21,9 @@ from interactive_validator import InteractiveValidator
 from document_masker import mask_docx, mask_xlsx, mask_pdf
 from report_generator import ReportGenerator
 
-load_dotenv()
+# .env лежит рядом с main.py — не зависит от текущей рабочей директории
+_ENV_PATH = Path(__file__).resolve().parent / ".env"
+load_dotenv(dotenv_path=_ENV_PATH)
 
 
 def debug_missing_entities_session(llm, document_text: str, extracted_entities: dict):
@@ -81,15 +84,52 @@ def get_parser(file_extension: str) -> ParserInterface:
     return parser_class()
 
 
-def run_pipeline(file_path: str, output_path: str = None, debug_mode: bool = False):
+def _unique_output_path(path: str) -> str:
+    """Если файл существует — добавляет _v2, _v3 и т.д.
+
+    'file_masked.docx'      -> 'file_masked.docx'         (если нет)
+    'file_masked.docx' (v2) -> 'file_masked_v2.docx'
+    'file_masked.docx' (v3) -> 'file_masked_v3.docx'
+    """
+    if not os.path.exists(path):
+        return path
+
+    base, ext = os.path.splitext(path)
+    counter = 2
+    while True:
+        candidate = f"{base}_v{counter}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+        counter += 1
+
+
+def run_pipeline(
+    file_path: str,
+    output_path: str = None,
+    target_types: List[str] = None,
+    debug_mode: bool = False,
+    ask_callback=None,
+):
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Указанный файл не найден: '{file_path}'")
 
     file_ext = os.path.splitext(file_path)[1].lower()
 
+    # --- Папки для результатов ---
+    project_root = Path(__file__).resolve().parent
+    masked_dir = project_root / "output" / "masked"
+    reports_dir = project_root / "output" / "reports"
+    masked_dir.mkdir(parents=True, exist_ok=True)
+    reports_dir.mkdir(parents=True, exist_ok=True)
+
+    source_name = os.path.splitext(os.path.basename(file_path))[0]
+
     if not output_path:
-        base, ext = os.path.splitext(file_path)
-        output_path = f"{base}_masked{ext}"
+        output_path = str(masked_dir / f"{source_name}_masked{file_ext}")
+        output_path = _unique_output_path(output_path)
+
+    if target_types is None:
+        target_types = ['INN', 'PHONE', 'PARTY', 'EMAIL', 'PASSPORT', 'ADDRESS', 'FIO', 'KPP']
 
     print("=" * 60)
     print(f"[1/5] Выполняется парсинг документа: {file_path}")
@@ -105,7 +145,7 @@ def run_pipeline(file_path: str, output_path: str = None, debug_mode: bool = Fal
         print(f"⚠️ Ошибка инициализации GigaChatLLM ({e}). Использование фоллбэка.")
         llm: LLMInterface = LocalOllamaLLM()
 
-    target_types = ['INN', 'PHONE', 'PARTY', 'EMAIL', 'PASSPORT', 'ADDRESS', 'FIO']
+    print(f"-> Запрошенные типы: {target_types}")
     extracted_entities_list: List[MaskedEntity] = llm.extract_entities(parsed_doc, target_types)
 
     initial_replacements_dict: Dict[str, str] = {}
@@ -128,7 +168,7 @@ def run_pipeline(file_path: str, output_path: str = None, debug_mode: bool = Fal
         )
 
     print("\n[3/5] Запуск модуля проверки полноты и валидации...")
-    validator = InteractiveValidator(llm_client=llm)
+    validator = InteractiveValidator(llm_client=llm, ask_callback=ask_callback)
 
     final_replacements_dict: Dict[str, str] = validator.validate_and_clarify(
         document_text=parsed_doc.full_text,
@@ -159,18 +199,22 @@ def run_pipeline(file_path: str, output_path: str = None, debug_mode: bool = Fal
 
     print("\n[5/5] Формирование отчётов о заменённых фрагментах...")
 
+    output_stem = os.path.splitext(os.path.basename(output_path))[0]
+
     json_report_path = ReportGenerator.save_json_report(
         input_filename=parsed_doc.filename,
         output_filename=os.path.basename(output_path),
         initial_replacements=initial_report_items,
-        final_replacements=final_report_items
+        final_replacements=final_report_items,
+        report_path=str(reports_dir / f"{output_stem}_report.json"),
     )
 
     txt_report_path = ReportGenerator.save_txt_report(
         input_filename=parsed_doc.filename,
         output_filename=os.path.basename(output_path),
         initial_replacements=initial_report_items,
-        final_replacements=final_report_items
+        final_replacements=final_report_items,
+        report_path=str(reports_dir / f"{output_stem}_report.txt"),
     )
 
     print("=" * 60)
@@ -179,6 +223,12 @@ def run_pipeline(file_path: str, output_path: str = None, debug_mode: bool = Fal
     print(f"📊 Отчёт JSON:           {os.path.abspath(json_report_path)}")
     print(f"📝 Отчёт TXT:            {os.path.abspath(txt_report_path)}")
     print("=" * 60)
+
+    return {
+        "masked": os.path.abspath(output_path),
+        "report_json": os.path.abspath(json_report_path),
+        "report_txt": os.path.abspath(txt_report_path),
+    }
 
 
 if __name__ == "__main__":
